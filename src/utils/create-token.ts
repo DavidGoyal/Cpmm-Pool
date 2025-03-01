@@ -12,6 +12,7 @@ import {
   createInitializeMintInstruction,
   createInitializeTransferFeeConfigInstruction,
   ExtensionType,
+  getAssociatedTokenAddressSync,
   getMintLen,
   getOrCreateAssociatedTokenAccount,
   LENGTH_SIZE,
@@ -49,6 +50,7 @@ import {
   txnFee,
   TAX_WALLET_ADDRESS,
 } from "../constants/constants";
+import { L } from "@raydium-io/raydium-sdk-v2/lib/raydium-3019c096";
 
 export const createToken = async () => {
   try {
@@ -112,7 +114,7 @@ export const createToken = async () => {
       mint: mint.publicKey,
       updateAuthority: payer.publicKey,
       uri: metadataUri,
-      additionalMetadata: [["description", metadata.description]],
+      additionalMetadata: [["Description", metadata.description]],
     };
 
     const mintAndPointerLen = getMintLen([
@@ -195,22 +197,40 @@ export const createToken = async () => {
       `Check the token at https://explorer.solana.com/address/${mint.publicKey}`
     );
 
-    const ata = await getOrCreateAssociatedTokenAccount(
-      connection,
-      payer,
+    let ata = getAssociatedTokenAddressSync(
       mint.publicKey,
       payer.publicKey,
       false,
-      "finalized",
-      { commitment: "finalized" },
       TOKEN_2022_PROGRAM_ID
     );
+    const max_retries = 5;
+    let retry = 0;
+    while (retry < max_retries) {
+      try {
+        const account = await getOrCreateAssociatedTokenAccount(
+          connection,
+          payer,
+          mint.publicKey,
+          payer.publicKey,
+          false,
+          "finalized",
+          { commitment: "finalized" },
+          TOKEN_2022_PROGRAM_ID
+        );
+        ata = account.address;
+        retry = max_retries;
+        break;
+      } catch (error) {
+        retry++;
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
 
     const mintTx = await mintToChecked(
       connection,
       payer,
       mint.publicKey,
-      ata.address,
+      ata,
       payer.publicKey,
       mintTokens * 10 ** decimals,
       decimals,
