@@ -7,7 +7,7 @@ export const owner: Keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 export const connection = new Connection(RPC_URL); //<YOUR_RPC_URL>
 // export const connection = new Connection(clusterApiUrl('devnet')) //<YOUR_RPC_URL>
 export const txVersion = TxVersion.V0; // or TxVersion.LEGACY
-const cluster = "devnet"; // 'mainnet' | 'devnet'
+const cluster = "mainnet"; // 'mainnet' | 'devnet'
 
 let raydium: Raydium | undefined;
 export const initSdk = async (params?: { loadToken?: boolean }) => {

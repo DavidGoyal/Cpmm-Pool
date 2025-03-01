@@ -1,4 +1,4 @@
-export const RPC_URL = "https://api.devnet.solana.com";
+export const RPC_URL = "";
 export const PRIVATE_KEY = "";
 export const mintTokens = 1000000;
 export const decimals = 9;
@@ -10,8 +10,7 @@ export const solAmount = 0.1;
 export const withdrawSlippage = 1;
 export const tokenPercentToAddInPool = 50;
 export const percentWithdraw = 100;
-export const mintDisabled = true;
-export const freezeDisabled = true;
+export const JITO_TIP_SOL = 0.00001;
 
 export const metadata = {
   name: "Noob Token",

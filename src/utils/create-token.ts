@@ -7,17 +7,18 @@ import {
 import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
 import { irysUploader } from "@metaplex-foundation/umi-uploader-irys";
 import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
   AuthorityType,
+  createAssociatedTokenAccountInstruction,
   createInitializeMetadataPointerInstruction,
   createInitializeMintInstruction,
   createInitializeTransferFeeConfigInstruction,
+  createMintToCheckedInstruction,
+  createSetAuthorityInstruction,
   ExtensionType,
   getAssociatedTokenAddressSync,
   getMintLen,
-  getOrCreateAssociatedTokenAccount,
   LENGTH_SIZE,
-  mintToChecked,
-  setAuthority,
   TOKEN_2022_PROGRAM_ID,
   TYPE_SIZE,
 } from "@solana/spl-token";
@@ -30,8 +31,8 @@ import {
 import {
   Connection,
   Keypair,
+  LAMPORTS_PER_SOL,
   PublicKey,
-  sendAndConfirmTransaction,
   SystemProgram,
   Transaction,
 } from "@solana/web3.js";
@@ -40,17 +41,15 @@ import fs from "fs";
 import path from "path";
 import {
   decimals,
-  freezeDisabled,
+  JITO_TIP_SOL,
   maxFee,
   metadata,
   mintTokens,
-  mintDisabled,
   PRIVATE_KEY,
   RPC_URL,
-  txnFee,
   TAX_WALLET_ADDRESS,
+  txnFee,
 } from "../constants/constants";
-import { L } from "@raydium-io/raydium-sdk-v2/lib/raydium-3019c096";
 
 export const createToken = async () => {
   try {
@@ -61,7 +60,7 @@ export const createToken = async () => {
         irysUploader({
           // mainnet address: "https://node1.irys.xyz"
           // devnet address: "https://devnet.irys.xyz"
-          address: "https://devnet.irys.xyz",
+          address: "https://node1.irys.xyz",
         })
       );
 
@@ -128,6 +127,9 @@ export const createToken = async () => {
       totalSpace + metadataLen
     );
 
+    let encodedSignedTxns = [];
+    let signatures = [];
+
     const initializeTransferFeeConfigInstruction =
       createInitializeTransferFeeConfigInstruction(
         mint.publicKey,
@@ -158,7 +160,7 @@ export const createToken = async () => {
       mint.publicKey,
       decimals,
       payer.publicKey,
-      freezeDisabled ? null : payer.publicKey,
+      null,
       TOKEN_2022_PROGRAM_ID
     );
 
@@ -189,77 +191,144 @@ export const createToken = async () => {
       initMetadataPointerInstructions,
       initMintInstructions,
       initMetadataInstruction,
-      updateMetadataFieldInstructions // if you want to add any custom field
-    );
-    await sendAndConfirmTransaction(connection, transaction, [payer, mint]);
-
-    console.log(
-      `Check the token at https://explorer.solana.com/address/${mint.publicKey}`
+      updateMetadataFieldInstructions
     );
 
-    let ata = getAssociatedTokenAddressSync(
+    let blockhash = await connection.getLatestBlockhash();
+    transaction.recentBlockhash = blockhash.blockhash;
+    transaction.feePayer = payer.publicKey;
+    transaction.sign(payer, mint);
+    const serializedCreateTokenTx = transaction.serialize();
+    let encodedCreateTokenTx = bs58.encode(serializedCreateTokenTx);
+    encodedSignedTxns.push(encodedCreateTokenTx);
+    signatures.push(bs58.encode(transaction.signature!));
+
+    const ata = getAssociatedTokenAddressSync(
       mint.publicKey,
       payer.publicKey,
       false,
       TOKEN_2022_PROGRAM_ID
     );
-    const max_retries = 5;
-    let retry = 0;
-    while (retry < max_retries) {
-      try {
-        const account = await getOrCreateAssociatedTokenAccount(
-          connection,
-          payer,
-          mint.publicKey,
-          payer.publicKey,
-          false,
-          "finalized",
-          { commitment: "finalized" },
-          TOKEN_2022_PROGRAM_ID
-        );
-        ata = account.address;
-        retry = max_retries;
-        break;
-      } catch (error) {
-        retry++;
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-    }
 
-    const mintTx = await mintToChecked(
-      connection,
-      payer,
-      mint.publicKey,
-      ata,
-      payer.publicKey,
-      mintTokens * 10 ** decimals,
-      decimals,
-      [payer],
-      { commitment: "finalized" },
-      TOKEN_2022_PROGRAM_ID
+    const createAtaTxn = new Transaction().add(
+      createAssociatedTokenAccountInstruction(
+        payer.publicKey,
+        ata,
+        payer.publicKey,
+        mint.publicKey,
+        TOKEN_2022_PROGRAM_ID,
+        ASSOCIATED_TOKEN_PROGRAM_ID
+      )
     );
+    blockhash = await connection.getLatestBlockhash();
+    createAtaTxn.recentBlockhash = blockhash.blockhash;
+    createAtaTxn.feePayer = payer.publicKey;
+    createAtaTxn.sign(payer);
 
-    console.log(
-      `Transaction for minting: https://explorer.solana.com/tx/${mintTx}`
+    const serializedCreateAtaTxn = createAtaTxn.serialize();
+    let encodedCreateAtaTxn = bs58.encode(serializedCreateAtaTxn);
+    encodedSignedTxns.push(encodedCreateAtaTxn);
+    signatures.push(bs58.encode(createAtaTxn.signature!));
+
+    const mintTx = new Transaction().add(
+      createMintToCheckedInstruction(
+        mint.publicKey,
+        payer.publicKey,
+        payer.publicKey,
+        mintTokens * 10 ** decimals,
+        decimals,
+        [payer],
+        TOKEN_2022_PROGRAM_ID
+      )
     );
+    blockhash = await connection.getLatestBlockhash();
+    mintTx.recentBlockhash = blockhash.blockhash;
+    mintTx.feePayer = payer.publicKey;
+    mintTx.sign(payer);
 
-    if (mintDisabled) {
-      const revokeMintAuthorityTx = await setAuthority(
-        connection,
-        payer,
+    const serializedMintTxn = mintTx.serialize();
+    let encodedMintTxn = bs58.encode(serializedMintTxn);
+    encodedSignedTxns.push(encodedMintTxn);
+    signatures.push(bs58.encode(mintTx.signature!));
+
+    const revokeTxn = new Transaction().add(
+      createSetAuthorityInstruction(
         mint.publicKey,
         payer.publicKey,
         AuthorityType.MintTokens,
         null,
         [payer],
-        { commitment: "finalized" },
         TOKEN_2022_PROGRAM_ID
-      );
+      )
+    );
 
-      console.log(
-        `Transaction for revoking mint authority: https://explorer.solana.com/tx/${revokeMintAuthorityTx}`
+    blockhash = await connection.getLatestBlockhash();
+    revokeTxn.recentBlockhash = blockhash.blockhash;
+    revokeTxn.feePayer = payer.publicKey;
+    revokeTxn.sign(payer);
+
+    const serializedRevokeTxn = revokeTxn.serialize();
+    let encodedRevokeTxn = bs58.encode(serializedRevokeTxn);
+    encodedSignedTxns.push(encodedRevokeTxn);
+    signatures.push(bs58.encode(revokeTxn.signature!));
+
+    const jitoTipTx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: payer.publicKey,
+        toPubkey: new PublicKey("96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5"),
+        lamports: JITO_TIP_SOL * LAMPORTS_PER_SOL,
+      })
+    );
+    blockhash = await connection.getLatestBlockhash();
+    jitoTipTx.recentBlockhash = blockhash.blockhash;
+    jitoTipTx.feePayer = payer.publicKey;
+    jitoTipTx.sign(payer);
+
+    const serializedJitoTipTxn = jitoTipTx.serialize();
+    let encodedJitoTipTxn = bs58.encode(serializedJitoTipTxn);
+    encodedSignedTxns.push(encodedJitoTipTxn);
+    signatures.push(bs58.encode(jitoTipTx.signature!));
+
+    try {
+      const jitoResponse = await fetch(
+        `https://mainnet.block-engine.jito.wtf/api/v1/bundles`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "sendBundle",
+            params: [encodedSignedTxns],
+          }),
+        }
       );
+      if (!jitoResponse.ok) {
+        const errorText = await jitoResponse.text();
+        throw new Error(`Jito bundle failed: ${errorText}`);
+      }
+      const jitoResult = await jitoResponse.json();
+    } catch (e) {
+      throw new Error(`Error sending bundle: ${e}`);
     }
+
+    for (let i = 0; i < signatures.length; i++) {
+      const latestBlockHash = await connection.getLatestBlockhash();
+      console.log(
+        `Waiting for transaction at ${signatures[i]} to get confirmed`
+      );
+      await connection.confirmTransaction({
+        blockhash: latestBlockHash.blockhash,
+        lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+        signature: signatures[0],
+      });
+    }
+
+    console.log(
+      `Check the token at https://explorer.solana.com/address/${mint.publicKey}`
+    );
 
     const tokenInfo = {
       address: mint.publicKey.toString(),
