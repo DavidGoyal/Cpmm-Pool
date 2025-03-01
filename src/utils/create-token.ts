@@ -233,7 +233,7 @@ export const createToken = async () => {
     const mintTx = new Transaction().add(
       createMintToCheckedInstruction(
         mint.publicKey,
-        payer.publicKey,
+        ata,
         payer.publicKey,
         mintTokens * 10 ** decimals,
         decimals,
@@ -310,20 +310,40 @@ export const createToken = async () => {
         throw new Error(`Jito bundle failed: ${errorText}`);
       }
       const jitoResult = await jitoResponse.json();
+      console.log(jitoResult);
+      const bundleHash = jitoResult.result;
+      console.log(`Bundle hash: ${bundleHash}`);
+
+      await new Promise((resolve) => setTimeout(resolve, 10000));
+      while (true) {
+        const bundleStatusResponse = await fetch(
+          "https://mainnet.block-engine.jito.wtf/api/v1/getInflightBundleStatuses",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "getInflightBundleStatuses",
+              params: [[bundleHash]],
+            }),
+          }
+        );
+        const bundleStatusResult = await bundleStatusResponse.json();
+        const res = bundleStatusResult.result.value;
+        console.log(res);
+
+        if (res[0].status === "Failed") {
+          throw new Error("Bundle failed");
+        } else if (res[0].landed_slot) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
     } catch (e) {
       throw new Error(`Error sending bundle: ${e}`);
-    }
-
-    for (let i = 0; i < signatures.length; i++) {
-      const latestBlockHash = await connection.getLatestBlockhash();
-      console.log(
-        `Waiting for transaction at ${signatures[i]} to get confirmed`
-      );
-      await connection.confirmTransaction({
-        blockhash: latestBlockHash.blockhash,
-        lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
-        signature: signatures[0],
-      });
     }
 
     console.log(

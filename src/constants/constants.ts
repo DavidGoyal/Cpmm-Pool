@@ -10,7 +10,7 @@ export const solAmount = 0.1;
 export const withdrawSlippage = 1;
 export const tokenPercentToAddInPool = 50;
 export const percentWithdraw = 100;
-export const JITO_TIP_SOL = 0.00001;
+export const JITO_TIP_SOL = 0.0001;
 
 export const metadata = {
   name: "Noob Token",
